@@ -211,6 +211,7 @@ data/
 logs/
 cred.py
 
+cret.py
 
 data/.minio.sys/
 data/minio/
