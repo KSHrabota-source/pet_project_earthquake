@@ -54,6 +54,7 @@ def fetch_and_transfer_raw_data_to_ods_pg(**context):
     con = duckdb.connect()
 
     try:
+        # 1. Настраиваем DuckDB: S3 + Postgres
         con.sql(
             f"""
             SET TIMEZONE='UTC';
@@ -78,7 +79,6 @@ def fetch_and_transfer_raw_data_to_ods_pg(**context):
 
             ATTACH '' AS dwh_postgres_db (TYPE postgres, SECRET dwh_postgres);
 
-            -- ВАЖНО: создаём схему и таблицу, если их нет
             CALL postgres_execute('dwh_postgres_db', 'CREATE SCHEMA IF NOT EXISTS ods');
 
             CALL postgres_execute('dwh_postgres_db', '
@@ -107,7 +107,21 @@ def fetch_and_transfer_raw_data_to_ods_pg(**context):
                     mag_source varchar
                 )
             ');
+            """
+        )
 
+        # 2. Считаем, сколько строк в parquet
+        row_count = con.execute(
+            f"""
+            SELECT count(*) AS cnt
+            FROM 's3://prod/{LAYER}/{SOURCE}/{start_date}/{start_date}_00-00-00.gz.parquet'
+            """
+        ).fetchone()[0]
+        logging.info(f"Rows in parquet for {start_date}: {row_count}")
+
+        # 3. Вставляем данные в Postgres
+        con.sql(
+            f"""
             INSERT INTO dwh_postgres_db.{SCHEMA}.{TARGET_TABLE}
             (
                 time,
@@ -157,8 +171,15 @@ def fetch_and_transfer_raw_data_to_ods_pg(**context):
                 locationSource AS location_source,
                 magSource AS mag_source
             FROM 's3://prod/{LAYER}/{SOURCE}/{start_date}/{start_date}_00-00-00.gz.parquet';
-            """,
+            """
         )
+
+        # 4. Считаем строки в Postgres через DuckDB
+        rows_in_pg = con.execute(
+            f"SELECT count(*) FROM dwh_postgres_db.{SCHEMA}.{TARGET_TABLE}"
+        ).fetchone()[0]
+        logging.info(f"Rows in Postgres after insert: {rows_in_pg}")
+
     finally:
         con.close()
 
